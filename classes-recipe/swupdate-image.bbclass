@@ -40,7 +40,7 @@ python do_swupdate_copy_swdescription() {
 
     import shutil
 
-    workdir = d.getVar('S')
+    workdir = d.getVar('WORKDIR')
     filespath = d.getVar('FILESPATH')
     sw_desc_path = bb.utils.which(filespath, "sw-description")
     shutil.copyfile(sw_desc_path, os.path.join(workdir, "sw-description"))
