@@ -66,22 +66,22 @@ def swupdate_getdepends(d):
 
     return depstr
 
-def swupdate_write_sha256(s):
+def swupdate_write_sha256(workdir):
     import re
     write_lines = []
-    with open(os.path.join(s, "sw-description"), 'r') as f:
+    with open(os.path.join(workdir, "sw-description"), 'r') as f:
        for line in f:
           shastr = r"sha256.+=.+@(.+\")"
           m = re.match(r"^(?P<before_placeholder>.+)(sha256|version).+[=:].*(?P<quote>[\'\"])@(?P<filename>.*)(?P=quote)", line)
           if m:
               filename = m.group('filename')
               bb.warn("Syntax for sha256 changed, please use $swupdate_get_sha256(%s)" % filename)
-              hash = swupdate_get_sha256(None, s, filename)
+              hash = swupdate_get_sha256(None, workdir, filename)
               write_lines.append(line.replace("@%s" % (filename), hash))
           else:
               write_lines.append(line)
 
-    with open(os.path.join(s, "sw-description"), 'w+') as f:
+    with open(os.path.join(workdir, "sw-description"), 'w+') as f:
         for line in write_lines:
             f.write(line)
 
@@ -97,7 +97,7 @@ def swupdate_exec_functions(d, s, write_lines):
             write_lines[index] = line
 
 
-def swupdate_expand_bitbake_variables(d, s):
+def swupdate_expand_bitbake_variables(d, s, workdir):
     write_lines = []
 
     with open(os.path.join(s, "sw-description"), 'r') as f:
@@ -131,7 +131,7 @@ def swupdate_expand_bitbake_variables(d, s):
 
     swupdate_exec_functions(d, s, write_lines)
 
-    with open(os.path.join(s, "sw-description"), 'w+') as f:
+    with open(os.path.join(workdir, "sw-description"), 'w+') as f:
         for line in write_lines:
             f.write(line)
 
@@ -173,17 +173,18 @@ def prepare_sw_description(d):
     import subprocess
 
     s = d.getVar('S')
-    swupdate_expand_bitbake_variables(d, s)
+    workdir = d.getVar('WORKDIR')
+    swupdate_expand_bitbake_variables(d, s, workdir)
 
-    swupdate_write_sha256(s)
+    swupdate_write_sha256(workdir)
 
     encrypt = d.getVar('SWUPDATE_ENCRYPT_SWDESC')
     if encrypt:
         bb.note("Encryption of sw-description")
-        shutil.copyfile(os.path.join(s, 'sw-description'), os.path.join(s, 'sw-description.plain'))
+        shutil.copyfile(os.path.join(workdir, 'sw-description'), os.path.join(workdir, 'sw-description.plain'))
         key,iv = swupdate_extract_keys(d.getVar('SWUPDATE_AES_FILE'))
-        iv = swupdate_get_IV(d, s, 'sw-description')
-        swupdate_encrypt_file(os.path.join(s, 'sw-description.plain'), os.path.join(s, 'sw-description'), key, iv)
+        iv = swupdate_get_IV(d, workdir, 'sw-description')
+        swupdate_encrypt_file(os.path.join(workdir, 'sw-description.plain'), os.path.join(workdir, 'sw-description'), key, iv)
 
     signing = d.getVar('SWUPDATE_SIGNING')
     if signing == "1":
@@ -191,8 +192,8 @@ def prepare_sw_description(d):
         signing = "RSA"
     if signing:
 
-        sw_desc_sig = os.path.join(s, 'sw-description.sig')
-        sw_desc =  os.path.join(s, 'sw-description.plain' if encrypt else 'sw-description')
+        sw_desc_sig = os.path.join(workdir, 'sw-description.sig')
+        sw_desc =  os.path.join(workdir, 'sw-description.plain' if encrypt else 'sw-description')
 
         if signing == "CUSTOM":
             signcmd = []
@@ -233,6 +234,7 @@ def swupdate_add_src_uri(d, list_for_cpio):
     import shutil
 
     s = d.getVar('S')
+    workdir = d.getVar('WORKDIR')
     exclude = (d.getVar("SWUPDATE_SRC_URI_EXCLUDE") or "").split()
 
     fetch = bb.fetch2.Fetch([], d)
@@ -310,9 +312,14 @@ def swupdate_add_artifacts(d, list_for_cpio):
 
 def swupdate_create_cpio(d, swudeploydir, list_for_cpio):
     s = d.getVar('S')
-    os.chdir(s)
+    workdir = d.getVar('WORKDIR')
+    os.chdir(workdir)
+    for file in list_for_cpio:
+        if not os.path.exists(file):
+            os.symlink(os.path.join(s, file), file)
+
     updateimage = d.getVar('IMAGE_NAME') + '.swu'
-    line = 'for i in ' + ' '.join(list_for_cpio) + '; do echo $i;done | cpio -ov -H crc --reproducible > ' + os.path.join(swudeploydir, updateimage)
+    line = 'for i in ' + ' '.join(list_for_cpio) + '; do echo $i;done | cpio -ov -H crc --reproducible -L > ' + os.path.join(swudeploydir, updateimage)
     os.system(line)
     os.chdir(swudeploydir)
     updateimage_link = d.getVar('IMAGE_LINK_NAME')
